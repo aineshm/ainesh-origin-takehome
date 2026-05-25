@@ -44,6 +44,9 @@ const CLASSIFICATIONS = [
 ] as const;
 const URGENCIES = ["P0", "P1", "P2", "P3"] as const;
 
+// Nullable fields use JSON-Schema union form (`type: ["string", "null"]`), which
+// the Anthropic tool API accepts. Mirrors the output schema's nullable intake
+// fields so the model can return null for anything not present in the message.
 const extractedIntakeSchema = {
   type: "object",
   description:

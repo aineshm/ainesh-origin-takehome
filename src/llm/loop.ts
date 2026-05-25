@@ -7,6 +7,8 @@ import { REAL_TOOL_NAMES, SUBMIT_TRIAGE, toolDefinitions } from "./toolSchemas.j
 import { buildSystemPrompt, renderItem } from "./prompt.js";
 import type { PrivacyVault } from "../privacy/vault.js";
 
+// Generous cap so a full submit_triage payload (draft reply + rationale) is never
+// truncated mid-tool-use, which would corrupt the JSON we parse from it.
 const MAX_TOKENS = 4096;
 
 function toolUseBlocks(content: Anthropic.ContentBlock[]): Anthropic.ToolUseBlock[] {
@@ -67,7 +69,9 @@ export async function runItemLoop(
       });
     }
 
-    // A submit_triage block in this turn is terminal (after siblings ran).
+    // A submit_triage block in this turn is terminal (after siblings ran). We end
+    // here without sending tool_results back — the conversation is over, so the
+    // API never needs them.
     if (submitBlock) {
       return { judgment: submitBlock.input as TriageJudgment, taskIds };
     }
