@@ -5,6 +5,7 @@ import { getClient, MAX_TURNS, MODEL } from "./client.js";
 import { executeTool } from "./executor.js";
 import { REAL_TOOL_NAMES, SUBMIT_TRIAGE, toolDefinitions } from "./toolSchemas.js";
 import { buildSystemPrompt, renderItem } from "./prompt.js";
+import type { PrivacyVault } from "../privacy/vault.js";
 
 const MAX_TOKENS = 4096;
 
@@ -26,6 +27,7 @@ function toolUseBlocks(content: Anthropic.ContentBlock[]): Anthropic.ToolUseBloc
 export async function runItemLoop(
   item: InboxItem,
   batchNowISO: string,
+  vault: PrivacyVault,
 ): Promise<ItemResult> {
   const client = getClient();
   const system = buildSystemPrompt();
@@ -53,6 +55,7 @@ export async function runItemLoop(
       const exec = await executeTool(
         block.name,
         block.input as Record<string, unknown>,
+        vault,
       );
       if (exec.taskId) {
         taskIds.push(exec.taskId);
