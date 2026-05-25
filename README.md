@@ -79,4 +79,5 @@ The provided files (`tools.ts`, `index.ts`, `validate.ts`, `types.ts`, schema) a
 - Grow the eval set and add over-escalation/precision metrics + a small red-team suite.
 - Surface a confidence signal per item to help reviewers prioritize, and richer `missing_info` for incomplete referrals.
 - Tighten the safety net (e.g. force escalation severity to match forced P0).
+- Run it as an always-on service that triages items as they arrive (continuous operation instead of a one-shot batch) — keeping the same human-in-the-loop gates: still drafts-not-sends, still every item flagged for review. The goal is to clear the queue continuously, never to act unattended.
 </content>
