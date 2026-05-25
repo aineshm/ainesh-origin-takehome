@@ -1,5 +1,14 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
+
+// Load .env. Some environments preset ANTHROPIC_API_KEY as an empty string,
+// which dotenv won't override by default — so explicitly fall back to the parsed
+// .env value whenever the current env var is missing or empty. A real, non-empty
+// environment variable still takes precedence.
+const parsedEnv = dotenv.config().parsed ?? {};
+if (!process.env.ANTHROPIC_API_KEY && parsedEnv.ANTHROPIC_API_KEY) {
+  process.env.ANTHROPIC_API_KEY = parsedEnv.ANTHROPIC_API_KEY;
+}
 
 /** Model used for every per-item triage loop. */
 export const MODEL = "claude-sonnet-4-6";
