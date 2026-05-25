@@ -58,7 +58,7 @@ The provided files (`tools.ts`, `index.ts`, `validate.ts`, `types.ts`, schema) a
 - **De-id depends on token preservation:** if the model alters a token, that field won't re-hydrate; mitigated by an explicit prompt instruction.
 
 **How I'd evaluate in production**
-- A labeled regression set far larger than 8 items, scored on: safeguarding recall (the metric that matters most — missing a P0 is the worst failure), over-escalation rate (P0/P1 precision), classification accuracy, and policy-adherence checks (never schedules, never auto-sends, OON never held).
+- A labeled regression set far larger than 8 items, scored on: safeguarding recall (missing a P0 is the worst failure), over-escalation rate (P0/P1 precision), classification accuracy, and policy-adherence checks (never schedules, never auto-sends, OON never held).
 - Automated red-team prompts for safeguarding phrasings and jailbreak attempts to bypass the no-clinical-advice rule.
 - A PHI-leak test asserting the model payload contains no raw identifiers.
 - Human-in-the-loop review metrics (since every item is `requires_human_review`): accept/edit/reject rates on drafts and recommended actions.
