@@ -1,91 +1,83 @@
-# Origin AI Engineering Take-Home: Referral Inbox Triage Agent
+# Cedar Kids Therapy — Referral Inbox Triage Agent
 
-Origin builds software for pediatric therapy practices. In this assignment, you are helping a fictional practice, Cedar Kids Therapy, triage its Monday inbox.
+An AI agent that triages a pediatric therapy practice's weekend inbox (fax referrals, voicemails, portal messages, emails) into a sorted, human-reviewable action plan. One structured, audited `ItemOutput` per inbox item.
 
-## Scenario
-
-It is Monday at 8am at a multi-disciplinary pediatric therapy practice supporting speech-language pathology, occupational therapy, and physical therapy. The shared inbox accumulated items over the weekend from pediatrician fax referrals, parent voicemails, parent portal messages, and emails. Build an AI agent prototype that turns the messy batch into a sorted, human-reviewable action plan.
-
-## What We Expect
-
-Strong submissions are usually incomplete but honest. We are evaluating triage judgment, tool orchestration, and scoping, not whether you finished every nice-to-have. Produce some output for every item, even thin; document what you cut in the README.
-
-You may use any AI coding agent (Claude Code, Cursor, Codex, etc.) while building. State your stack and assumptions in your README.
-
-Runtime LLM usage is allowed and recommended, but not required. Origin will provide a temporary capped API key for either OpenAI or Anthropic; the email distributing the key will name the provider and the environment variable to set (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). You may also use your own provider. You may install dependencies for the provider you choose (e.g., `npm install openai` or `npm install @anthropic-ai/sdk`). Use any key only with the provided synthetic data, store it in an environment variable, and do not commit it. Model choice is not part of the rubric.
-
-## How To Run
+## 1. How to run
 
 ```bash
 npm install
+cp .env.example .env        # then paste your key into .env: ANTHROPIC_API_KEY=...
 npm run triage   -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
 npm run validate -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
 ```
 
-The commands also work with no flags and default to the paths above. Reviewers may run the same commands against similar hidden synthetic input. Do not hardcode input, output, or trace paths.
+All flags are optional and default to the paths above. Additional scripts:
 
-## Share And Submit
+```bash
+npm test          # deterministic unit suite (vitest) — no API key needed
+npm run eval      # opt-in: runs the real LLM, asserts high-confidence triage outcomes
+npm run typecheck # tsc --noEmit
+```
 
-Create your own GitHub repo from this starter pack and implement your solution there. The repo can be public or private. When you are done, submit the repo link. If it is private, grant access to the Origin reviewer GitHub account `@nixu`.
+The agent reads `ANTHROPIC_API_KEY` from `.env` or the environment. End-to-end runtime is a couple of minutes (8 items, processed sequentially).
 
-Commit your code, your updated `README.md`, and your final generated `output.json`. Do not commit API keys, `.env` files, real PHI, `node_modules/`, or `.trace/`.
+## 2. Stack and runtime
 
-We expect you to spend about 2 hours. If you stop before finishing, commit what you have and describe the cuts in your README.
+- **Language/runtime:** TypeScript on Node LTS, run with `tsx`, npm scripts.
+- **LLM:** Anthropic Messages API tool-use loop via `@anthropic-ai/sdk`, model `claude-sonnet-4-6`. We drive the loop directly rather than using a heavier agent framework — the task is a bounded, single-cycle, strongly-audited batch, so owning the loop gives guaranteed trace correctness and direct control over guardrails.
+- **Testing:** `vitest` for the deterministic core; a separate opt-in real-LLM eval.
+- **Other deps:** `dotenv` (key loading), plus the provided `ajv`/`ulid`.
 
-Update this README with these sections before submitting:
+## 3. Architecture
 
-1. How to run
-2. Stack and runtime
-3. Architecture
-4. Failure modes and production eval
-5. What I chose not to build, and why
-6. What I would do with another 4 hours
+Per item, inside `withItemContext(item.id, …)` so every tool call is attributed in the audit trace:
 
-## Your Task
+```
+item → PHI de-id → tool-use loop (model) → safety net → assemble → ItemOutput
+```
 
-Implement the agent in `src/agent.ts`. It should read the `InboxItem[]` it receives, use the provided tools where appropriate, and return one output item per inbox item. `src/index.ts` wraps your items with `buildBatchOutput()` and writes the final `output.json`.
+- **PHI de-identification gateway** (`src/privacy/`): a per-item `PrivacyVault` pseudonymizes the message (emails, phones, DOBs, member IDs, labeled names → `[NAME_1]`…) before it reaches the model. Real values are restored inside the executor before the real tools run (so the trace and output stay accurate) and on the final judgment. The external LLM never sees raw identifiers.
+- **Tool-use loop** (`src/llm/loop.ts`): the model orchestrates the 8 provided tools and finishes by calling a `submit_triage` tool that returns its structured judgment. Real tool calls are executed (via `executor.ts` → the real `src/tools.ts`) and their rich results fed back; a `submit_triage` block ends the loop. Sibling real-tool calls in the same turn run before termination, so a parallel call is never dropped. A turn cap forces a final `submit_triage`.
+- **Policy & safety:** safety-critical rules (urgency calibration, safeguarding, no-clinical-advice, draft-only, never-schedule, out-of-network handling, date anchoring, language access) are embedded in the system prompt; `lookup_policy` is used where an operational policy materially drives the decision.
+- **Deterministic safety net** (`src/triage/safetyNet.ts`): after the model returns, a conservative check scans for clear safeguarding signals. If present, it forces P0 + escalation and ensures an `escalate` call and a same-hour clinical-lead task exist in the trace (idempotent — it won't double-fire). It only escalates upward, so it can't cause over-escalation.
+- **Assembly** (`src/triage/assemble.ts`): builds the `ItemOutput`, hard-sets `requires_human_review: true`, normalizes `discipline`, and passes `tools_called` through verbatim from `getToolCallsForItem`. Summary counts come only from the provided `buildBatchOutput`.
+- **Error isolation:** a per-item failure yields a minimal safe output (still surfacing any recorded tool calls), so one bad item never sinks the batch or breaks validation.
 
-Available tools: `search_patient`, `verify_insurance`, `lookup_policy`, `find_slots`, `hold_slot`, `create_task`, `draft_message`, `escalate`.
+**On the sample inbox** the agent escalates the safeguarding voicemail to P0 (with a clinical-lead review task), holds the "URGENT" same-day reschedule at P1 rather than over-escalating, withholds clinical advice on the R-sounds question, drafts in Spanish for the Spanish-speaking Medicaid family (matched to a Spanish-speaking SLP), and blocks scheduling for the out-of-network Kaiser referral in favor of a billing conversation — and passes `npm run validate`.
 
-Use `schema/output.schema.json` as the source of truth for the output shape. `data/example_output.json` shows one non-trivial worked item. It is illustrative and is not expected to pass validation by itself. **Do not copy the example call IDs** into your output — real outputs must use the `call_id` values returned by `getToolCallsForItem()`.
+The provided files (`tools.ts`, `index.ts`, `validate.ts`, `types.ts`, schema) are unmodified; all logic lives in new modules plus the implemented `src/agent.ts`.
 
-## Time Box
+## 4. Failure modes and production eval
 
-Spend about 2 hours. Suggested allocation: 20 minutes reading and designing, 70 minutes building, 20 minutes self-evaluating against the validator and the inbox, 10 minutes updating the README. Expected end-to-end runtime for `npm run triage` should be a few minutes or less; if your agent is much slower, that is worth noting in the README rather than optimizing under time pressure.
+**Known limitations of this prototype**
+- **De-id name coverage is an MVP.** Structured identifiers (email/phone/DOB/member-ID) are detected robustly and reversibly; names rely on labeled/contextual patterns, so an unlabeled free-text first name (e.g. "my son Leo") can still reach the model. Production needs clinical NER (e.g. Microsoft Presidio) behind the same `PrivacyVault` interface.
+- **The local audit trace and `output.json` contain real (synthetic) PHI** by design — that's the system of record. With real PHI this requires encryption at rest, access controls, and retention limits.
+- **Third-party LLM:** sending any real PHI to Anthropic requires a BAA + zero-retention configuration. The de-id gateway reduces but does not by itself satisfy this.
+- **Nondeterminism:** borderline P2/P3 calls can vary run to run.
+- **No retry/backoff:** a transient API error degrades that one item to a safe fallback rather than retrying.
+- **De-id depends on token preservation:** if the model alters a token, that field won't re-hydrate; mitigated by an explicit prompt instruction.
 
-Minimum viable submission: processes every item in `data/inbox.json`, makes relevant tool calls including at least 3 distinct tools across the batch, writes a valid `output.json`, and passes `npm run validate`. Beyond that floor, your architecture, error handling, audit discipline, and scoping choices are part of what we evaluate.
+**How I'd evaluate in production**
+- A labeled regression set far larger than 8 items, scored on: safeguarding recall (missing a P0 is the worst failure), over-escalation rate (P0/P1 precision), classification accuracy, and policy-adherence checks (never schedules, never auto-sends, OON never held).
+- Automated red-team prompts for safeguarding phrasings and jailbreak attempts to bypass the no-clinical-advice rule.
+- A PHI-leak test asserting the model payload contains no raw identifiers.
+- Human-in-the-loop review metrics (since every item is `requires_human_review`): accept/edit/reject rates on drafts and recommended actions.
 
-## Constraints
+## 5. What I chose not to build, and why
 
-- Use TypeScript, Node LTS, and npm. If this creates a real accessibility or environment issue, reach out.
-- Use the provided tools in `src/tools.ts`; do not modify, reimplement, or bypass them. The tools create the audit trace used by the validator, so bypassing them fails validation.
-- Use at least 3 distinct tools across the batch. Strong solutions use tools as part of the decision process across multiple items, not just once to satisfy the threshold. Irrelevant or performative tool calls will be penalized.
-- Use `withItemContext(item.id, async () => ...)` around item-level tool calls.
-- Use `getToolCallsForItem(item.id)` for `tools_called[]`; pass the returned entries through unchanged.
-- Use `buildBatchOutput(items)` through the starter `src/index.ts`; do not hand-compute summary counts.
-- Do not auto-send messages. Use `draft_message` only.
-- Do not schedule appointments. `find_slots` and `hold_slot` are reviewable; scheduling is not.
-- Use only synthetic data. Do not add real PHI.
+- **A rule-based fallback engine.** It's an LLM agent; the key is part of its runtime. A parallel deterministic triage engine would be significant code competing with the time budget and isn't the point.
+- **Retry/backoff and request parallelism.** Sequential processing meets the "few minutes" target for 8 items and is safer against a rate-limited key; parallelism is a trivial later swap. Named here rather than built.
+- **Full NER-based de-identification.** The MVP covers the high-confidence identifiers; robust name redaction is a documented upgrade path, not a 2-hour task.
+- **Attachment/PDF parsing.** Referral content is inline in the item body; the attachments are filenames only.
+- **Broad eval coverage.** The eval asserts only high-confidence, high-stakes cases to stay fast and non-flaky; borderline urgency calls are left to manual review.
 
-## Urgency Calibration
+## 6. What I would do with another 4 hours
 
-- `P0`: safeguarding, imminent harm, mandated-reporter escalation. Same-hour human review.
-- `P1`: same-day operational issue requiring prompt staff action.
-- `P2`: normal intake, scheduling, billing, or clinical-review workflow.
-- `P3`: low-priority admin, FYI, spam.
-
-Default to `P2` unless there is a clear safety or same-day operational reason. Over-escalation is itself a production failure mode.
-
-## Review Variants
-
-Similar synthetic variants may be run during review. We will not tell you what they cover, but the visible 8 items show the kinds of cases we care about.
-
-## Rubric
-
-- Safety and domain judgment: 25%
-- Tool orchestration and action model: 25%
-- Output correctness and auditability: 20%
-- Engineering quality: 15%
-- README and production thinking: 15%
-
-Draft replies should be clear, empathetic, concise, and operationally useful. They must not provide clinical advice or imply messages were sent.
+- Swap the regex name detector for Presidio (or a clinical NER) behind the existing `PrivacyVault`, and add a PHI-leak assertion to the test suite.
+- Parallelize item processing with a small concurrency cap.
+- Add retry/backoff with jitter on transient API errors.
+- Grow the eval set and add over-escalation/precision metrics + a small red-team suite.
+- Surface a confidence signal per item to help reviewers prioritize, and richer `missing_info` for incomplete referrals.
+- Tighten the safety net (e.g. force escalation severity to match forced P0).
+- Run it as an always-on service that triages items as they arrive (continuous operation instead of a one-shot batch) — keeping the same human-in-the-loop gates: still drafts-not-sends, still every item flagged for review. The goal is to clear the queue continuously, never to act unattended.
+</content>
